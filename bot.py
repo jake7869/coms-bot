@@ -23,9 +23,9 @@ user_comms_data = defaultdict(lambda: {"minutes": 0, "offences": 0, "rule_breaks
 # RULES list (from your chart)
 RULE_BREAKS = {
     # Group 1
-    "No Microphone": 20,
-    "RDM": 120,
-    "VDM": 120,
+    "Fail RP": 180,
+    "RDM": 180,
+    "VDM": 180,
     "Gta Driving/Hot Repairing/DVing/Mid RP Scene": 60,
     "Abusing Bulletproof vehicles=Powergaming": 120,
     "Talking About Rules Without Staff": 120,
