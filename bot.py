@@ -20,11 +20,12 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # Data storage
 user_comms_data = defaultdict(lambda: {"minutes": 0, "offences": 0, "rule_breaks": []})
 
-# RULES from your punishments
+# RULES list (from your chart)
 RULE_BREAKS = {
+    # Group 1
     "No Microphone": 20,
-    "Refusal To Remove Whitelisted Clothing": 20,
-    "Hot Mic": 20,
+    "RDM": 120,
+    "VDM": 120,
     "Gta Driving/Hot Repairing/DVing/Mid RP Scene": 60,
     "Abusing Bulletproof vehicles=Powergaming": 120,
     "Talking About Rules Without Staff": 120,
@@ -46,6 +47,7 @@ RULE_BREAKS = {
     "LTAP": 360,
     "N word Hard R": 360,
     "F slur (homophobic)": 360,
+    # Group 2
     "IRL Threat": 360,
     "Forced ERP=TOS": 360,
     "Mass Tos": 360,
@@ -74,6 +76,10 @@ RULE_BREAKS = {
     "Giving Away/Selling NHS Equipment": "PERM BAN",
 }
 
+# Split rule breaks into two groups
+GROUP1 = list(RULE_BREAKS.items())[:25]
+GROUP2 = list(RULE_BREAKS.items())[25:]
+
 def build_leaderboard():
     sorted_data = sorted(user_comms_data.items(), key=lambda x: x[1]["minutes"], reverse=True)
     desc = ""
@@ -81,35 +87,54 @@ def build_leaderboard():
         desc += f"**{idx}. <@{user_id}>** - {data['minutes']} minutes, {data['offences']} offences\n"
     return desc if desc else "No comms records yet."
 
-class AddCommsSelect(discord.ui.Select):
+class Group1Select(discord.ui.Select):
     def __init__(self):
         options = [
             discord.SelectOption(label=rule, description=f"{minutes} mins" if minutes != "PERM BAN" else "Permanent Ban")
-            for rule, minutes in RULE_BREAKS.items()
+            for rule, minutes in GROUP1
         ]
-        super().__init__(placeholder="Select Rule Break...", min_values=1, max_values=1, options=options)
+        super().__init__(placeholder="Group 1 Rules", min_values=0, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
-        rule = self.values[0]
-        minutes = RULE_BREAKS.get(rule, 0)
+        await handle_selection(self, interaction)
 
-        if minutes == "PERM BAN":
-            await interaction.response.send_message(f"🚫 **{rule}** is a permanent ban offence. No comms assigned.", ephemeral=True)
-            return
+class Group2Select(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label=rule, description=f"{minutes} mins" if minutes != "PERM BAN" else "Permanent Ban")
+            for rule, minutes in GROUP2
+        ]
+        super().__init__(placeholder="Group 2 Rules", min_values=0, max_values=1, options=options)
 
-        user_comms_data[interaction.user.id]["minutes"] += minutes
-        user_comms_data[interaction.user.id]["offences"] += 1
-        user_comms_data[interaction.user.id]["rule_breaks"].append(rule)
+    async def callback(self, interaction: discord.Interaction):
+        await handle_selection(self, interaction)
 
-        log_channel = bot.get_channel(LOG_CHANNEL_ID)
-        await log_channel.send(
-            f"🛑 **{interaction.user.mention}** received **{minutes} minutes** in comms for **{rule}**."
-        )
+async def handle_selection(select, interaction):
+    selected = select.values
+    if not selected:
+        await interaction.response.send_message("❗ Please select a rule break.", ephemeral=True)
+        return
 
-        leaderboard_channel = bot.get_channel(LEADERBOARD_CHANNEL_ID)
-        await leaderboard_channel.send(f"🏆 Updated Leaderboard:\n{build_leaderboard()}")
+    rule = selected[0]
+    minutes = RULE_BREAKS.get(rule)
 
-        await interaction.response.send_message("✅ Comms recorded.", ephemeral=True)
+    if minutes == "PERM BAN":
+        await interaction.response.send_message(f"🚫 **{rule}** is a permanent ban offence. No comms assigned.", ephemeral=True)
+        return
+
+    user_comms_data[interaction.user.id]["minutes"] += minutes
+    user_comms_data[interaction.user.id]["offences"] += 1
+    user_comms_data[interaction.user.id]["rule_breaks"].append(rule)
+
+    log_channel = bot.get_channel(LOG_CHANNEL_ID)
+    await log_channel.send(
+        f"🛑 **{interaction.user.mention}** received **{minutes} minutes** in comms for **{rule}**."
+    )
+
+    leaderboard_channel = bot.get_channel(LEADERBOARD_CHANNEL_ID)
+    await leaderboard_channel.send(f"🏆 Updated Leaderboard:\n{build_leaderboard()}")
+
+    await interaction.response.send_message("✅ Comms recorded.", ephemeral=True)
 
 class CommsPanel(discord.ui.View):
     def __init__(self):
@@ -118,7 +143,8 @@ class CommsPanel(discord.ui.View):
     @discord.ui.button(label="➕ Add Comms", style=discord.ButtonStyle.green, custom_id="add_comms")
     async def add_comms(self, interaction: discord.Interaction, button: discord.ui.Button):
         view = discord.ui.View(timeout=60)
-        view.add_item(AddCommsSelect())
+        view.add_item(Group1Select())
+        view.add_item(Group2Select())
         await interaction.response.send_message("Select the rule break:", view=view, ephemeral=True)
 
     @discord.ui.button(label="🔁 Reset Comms Stats", style=discord.ButtonStyle.danger, custom_id="reset_comms")
