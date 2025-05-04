@@ -4,6 +4,56 @@ import os
 from collections import defaultdict
 import asyncio
 
+# STRIKE MESSAGES — HARSH AND ESCALATING
+strike_messages = {
+    "Strike 1": {
+        "dm": (
+            "🔴 **STRIKE 1 WARNING**\n\n"
+            "You now have **240+ minutes** of comms logged against your account.\n"
+            "This is your **first strike**.\n\n"
+            "⚠️ Continued rule breaking will lead to further punishment.\n"
+            "Start taking the rules seriously — this is your last soft chance."
+        ),
+        "public": (
+            "🔴 **STRIKE 1 ISSUED:** {mention}\n"
+            "❗ 240+ total minutes in comms.\n"
+            "❗ Automatically assigned **Strike 1** role.\n"
+            "This player is officially on watch."
+        )
+    },
+    "Strike 2": {
+        "dm": (
+            "🔴 **STRIKE 2 WARNING**\n\n"
+            "You now have **480+ minutes** of comms logged against your account.\n"
+            "This is your **second strike**.\n\n"
+            "🚫 You are one step away from being removed from the community.\n"
+            "Follow every rule from here on out — no excuses will be accepted."
+        ),
+        "public": (
+            "🔴 **STRIKE 2 ISSUED:** {mention}\n"
+            "❗ 480+ total minutes in comms.\n"
+            "❗ Automatically assigned **Strike 2** role.\n"
+            "🚨 Staff are advised to keep a very close eye on this player."
+        )
+    },
+    "Strike 3": {
+        "dm": (
+            "🚨 **STRIKE 3 FINAL WARNING**\n\n"
+            "You now have **720+ minutes** of comms.\n"
+            "This is your **third and final strike**.\n\n"
+            "⛔ You are now flagged as a **Problem Player**.\n"
+            "Staff have been alerted — your next mistake will likely result in a kick or ban."
+        ),
+        "public": (
+            "🚨 **STRIKE 3 ISSUED:** {mention}\n"
+            "❗ 720+ total minutes in comms.\n"
+            "❗ Assigned **Strike 3** (Problem Player).\n"
+            "⚠️ This player is now on final watch. Any more issues = removal."
+        )
+    }
+}
+
+# ENV setup
 TOKEN = os.getenv("DISCORD_TOKEN")
 PANEL_CHANNEL_ID = int(os.getenv("PANEL_CHANNEL_ID"))
 LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID"))
@@ -17,7 +67,6 @@ intents.guilds = True
 intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
-
 user_comms_data = defaultdict(lambda: {"minutes": 0, "offences": 0, "rule_breaks": []})
 
 RULE_BREAKS = {
@@ -85,23 +134,15 @@ def build_leaderboard():
 
 class Group1Select(discord.ui.Select):
     def __init__(self):
-        options = [
-            discord.SelectOption(label=rule, description=f"{minutes} mins" if minutes != "PERM BAN" else "Permanent Ban")
-            for rule, minutes in GROUP1
-        ]
+        options = [discord.SelectOption(label=rule, description=f"{minutes} mins" if minutes != "PERM BAN" else "Permanent Ban") for rule, minutes in GROUP1]
         super().__init__(placeholder="Group 1 Rules", min_values=0, max_values=1, options=options)
-
     async def callback(self, interaction: discord.Interaction):
         await handle_selection(self, interaction)
 
 class Group2Select(discord.ui.Select):
     def __init__(self):
-        options = [
-            discord.SelectOption(label=rule, description=f"{minutes} mins" if minutes != "PERM BAN" else "Permanent Ban")
-            for rule, minutes in GROUP2
-        ]
+        options = [discord.SelectOption(label=rule, description=f"{minutes} mins" if minutes != "PERM BAN" else "Permanent Ban") for rule, minutes in GROUP2]
         super().__init__(placeholder="Group 2 Rules", min_values=0, max_values=1, options=options)
-
     async def callback(self, interaction: discord.Interaction):
         await handle_selection(self, interaction)
 
@@ -110,14 +151,11 @@ async def handle_selection(select, interaction):
     if not selected:
         await interaction.response.send_message("❗ Please select a rule break.", ephemeral=True)
         return
-
     rule = selected[0]
     minutes = RULE_BREAKS.get(rule)
-
     if minutes == "PERM BAN":
         await interaction.response.send_message(f"🚫 **{rule}** is a permanent ban offence. No comms assigned.", ephemeral=True)
         return
-
     user_id = interaction.user.id
     user_data = user_comms_data[user_id]
     user_data["minutes"] += minutes
@@ -131,33 +169,30 @@ async def handle_selection(select, interaction):
     member = guild.get_member(user_id)
     if member:
         thresholds = [
-            (240, "Strike 1", "You have reached 4 hours (240+ minutes) of comms. This is your first strike."),
-            (480, "Strike 2", "You have reached 8 hours (480+ minutes) of comms. This is your second strike."),
-            (720, "Strike 3", "You have reached 12 hours (720+ minutes) of comms. You are flagged as a problem player."),
+            (240, "Strike 1"),
+            (480, "Strike 2"),
+            (720, "Strike 3"),
         ]
-        for threshold, role_name, dm_message in thresholds:
+        for threshold, role_name in thresholds:
             role = discord.utils.get(guild.roles, name=role_name)
             if user_data["minutes"] >= threshold and role and role not in member.roles:
                 try:
-                    await member.add_roles(role, reason="Automatic comms penalty")
-                    await member.send(f"⚠️ {dm_message}")
+                    dm_content = strike_messages[role_name]["dm"]
+                    await member.add_roles(role, reason="Auto Strike")
+                    await member.send(dm_content)
                     public_log_channel = bot.get_channel(PUBLIC_LOG_CHANNEL_ID)
                     if public_log_channel:
-                        await public_log_channel.send(
-                            f"⚠️ {member.mention} has been given **{role_name}** for reaching {threshold}+ minutes in comms."
-                        )
+                        await public_log_channel.send(strike_messages[role_name]["public"].format(mention=member.mention))
                 except Exception as e:
-                    print(f"Failed to assign role or DM: {e}")
+                    print(f"Strike role/DM failed: {e}")
 
     leaderboard_channel = bot.get_channel(LEADERBOARD_CHANNEL_ID)
     await leaderboard_channel.send(f"🏆 Updated Leaderboard:\n{build_leaderboard()}")
-
     await interaction.response.send_message("✅ Comms recorded.", ephemeral=True)
 
 class CommsPanel(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
-
     @discord.ui.button(label="➕ Add Comms", style=discord.ButtonStyle.green, custom_id="add_comms")
     async def add_comms(self, interaction: discord.Interaction, button: discord.ui.Button):
         view = discord.ui.View(timeout=60)
@@ -170,12 +205,8 @@ class CommsPanel(discord.ui.View):
         if ADMIN_ROLE_ID not in [role.id for role in interaction.user.roles]:
             await interaction.response.send_message("❌ You do not have permission to reset.", ephemeral=True)
             return
-
         await interaction.response.send_message("Type `yes` within 10 seconds to confirm reset.", ephemeral=True)
-
-        def check(m):
-            return m.author.id == interaction.user.id and m.channel == interaction.channel
-
+        def check(m): return m.author.id == interaction.user.id and m.channel == interaction.channel
         try:
             msg = await bot.wait_for('message', check=check, timeout=10)
             if msg.content.lower() == "yes":
