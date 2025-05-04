@@ -9,6 +9,7 @@ PANEL_CHANNEL_ID = int(os.getenv("PANEL_CHANNEL_ID"))
 LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID"))
 LEADERBOARD_CHANNEL_ID = int(os.getenv("LEADERBOARD_CHANNEL_ID"))
 ADMIN_ROLE_ID = int(os.getenv("ADMIN_ROLE_ID"))
+PUBLIC_LOG_CHANNEL_ID = int(os.getenv("PUBLIC_LOG_CHANNEL_ID"))
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -17,12 +18,9 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Data storage
 user_comms_data = defaultdict(lambda: {"minutes": 0, "offences": 0, "rule_breaks": []})
 
-# RULES list (from your chart)
 RULE_BREAKS = {
-    # Group 1
     "Fail RP": 180,
     "RDM": 180,
     "VDM": 180,
@@ -47,7 +45,6 @@ RULE_BREAKS = {
     "LTAP": 360,
     "N word Hard R": 360,
     "F slur (homophobic)": 360,
-    # Group 2
     "IRL Threat": 360,
     "Forced ERP=TOS": 360,
     "Mass Tos": 360,
@@ -76,7 +73,6 @@ RULE_BREAKS = {
     "Giving Away/Selling NHS Equipment": "PERM BAN",
 }
 
-# Split rule breaks into two groups
 GROUP1 = list(RULE_BREAKS.items())[:25]
 GROUP2 = list(RULE_BREAKS.items())[25:]
 
@@ -122,14 +118,36 @@ async def handle_selection(select, interaction):
         await interaction.response.send_message(f"🚫 **{rule}** is a permanent ban offence. No comms assigned.", ephemeral=True)
         return
 
-    user_comms_data[interaction.user.id]["minutes"] += minutes
-    user_comms_data[interaction.user.id]["offences"] += 1
-    user_comms_data[interaction.user.id]["rule_breaks"].append(rule)
+    user_id = interaction.user.id
+    user_data = user_comms_data[user_id]
+    user_data["minutes"] += minutes
+    user_data["offences"] += 1
+    user_data["rule_breaks"].append(rule)
 
     log_channel = bot.get_channel(LOG_CHANNEL_ID)
-    await log_channel.send(
-        f"🛑 **{interaction.user.mention}** received **{minutes} minutes** in comms for **{rule}**."
-    )
+    await log_channel.send(f"🛑 **{interaction.user.mention}** received **{minutes} minutes** in comms for **{rule}**.")
+
+    guild = interaction.guild
+    member = guild.get_member(user_id)
+    if member:
+        thresholds = [
+            (240, "Strike 1", "You have reached 4 hours (240+ minutes) of comms. This is your first strike."),
+            (480, "Strike 2", "You have reached 8 hours (480+ minutes) of comms. This is your second strike."),
+            (720, "Strike 3", "You have reached 12 hours (720+ minutes) of comms. You are flagged as a problem player."),
+        ]
+        for threshold, role_name, dm_message in thresholds:
+            role = discord.utils.get(guild.roles, name=role_name)
+            if user_data["minutes"] >= threshold and role and role not in member.roles:
+                try:
+                    await member.add_roles(role, reason="Automatic comms penalty")
+                    await member.send(f"⚠️ {dm_message}")
+                    public_log_channel = bot.get_channel(PUBLIC_LOG_CHANNEL_ID)
+                    if public_log_channel:
+                        await public_log_channel.send(
+                            f"⚠️ {member.mention} has been given **{role_name}** for reaching {threshold}+ minutes in comms."
+                        )
+                except Exception as e:
+                    print(f"Failed to assign role or DM: {e}")
 
     leaderboard_channel = bot.get_channel(LEADERBOARD_CHANNEL_ID)
     await leaderboard_channel.send(f"🏆 Updated Leaderboard:\n{build_leaderboard()}")
@@ -152,12 +170,12 @@ class CommsPanel(discord.ui.View):
         if ADMIN_ROLE_ID not in [role.id for role in interaction.user.roles]:
             await interaction.response.send_message("❌ You do not have permission to reset.", ephemeral=True)
             return
-        
+
         await interaction.response.send_message("Type `yes` within 10 seconds to confirm reset.", ephemeral=True)
 
         def check(m):
             return m.author.id == interaction.user.id and m.channel == interaction.channel
-        
+
         try:
             msg = await bot.wait_for('message', check=check, timeout=10)
             if msg.content.lower() == "yes":
