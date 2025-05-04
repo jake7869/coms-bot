@@ -4,7 +4,7 @@ import os
 from collections import defaultdict
 import asyncio
 
-# STRIKE MESSAGES — HARSH AND ESCALATING
+# STRIKE MESSAGES
 strike_messages = {
     "Strike 1": {
         "dm": (
@@ -53,7 +53,6 @@ strike_messages = {
     }
 }
 
-# ENV setup
 TOKEN = os.getenv("DISCORD_TOKEN")
 PANEL_CHANNEL_ID = int(os.getenv("PANEL_CHANNEL_ID"))
 LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID"))
@@ -132,63 +131,93 @@ def build_leaderboard():
         desc += f"**{idx}. <@{user_id}>** - {data['minutes']} minutes, {data['offences']} offences\n"
     return desc if desc else "No comms records yet."
 
+class ExplanationModal(discord.ui.Modal, title="Comms Explanation"):
+    def __init__(self, rule, minutes):
+        super().__init__()
+        self.rule = rule
+        self.minutes = minutes
+
+        self.explanation = discord.ui.TextInput(
+            label="What happened?",
+            style=discord.TextStyle.paragraph,
+            placeholder="Explain the situation (optional)",
+            required=False,
+            max_length=500
+        )
+        self.clip = discord.ui.TextInput(
+            label="Clip link (if any)",
+            style=discord.TextStyle.short,
+            placeholder="https://...",
+            required=False
+        )
+
+        self.add_item(self.explanation)
+        self.add_item(self.clip)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        user_id = interaction.user.id
+        user_data = user_comms_data[user_id]
+        user_data["minutes"] += self.minutes
+        user_data["offences"] += 1
+        user_data["rule_breaks"].append(self.rule)
+
+        log_channel = interaction.client.get_channel(LOG_CHANNEL_ID)
+        log_msg = f"🛑 {interaction.user.mention} received **{self.minutes} minutes** in comms for **{self.rule}**."
+        if self.explanation.value:
+            log_msg += f"\n📄 **Explanation:** {self.explanation.value}"
+        if self.clip.value:
+            log_msg += f"\n🎬 **Clip:** {self.clip.value}"
+
+        await log_channel.send(log_msg)
+
+        guild = interaction.guild
+        member = guild.get_member(user_id)
+        if member:
+            thresholds = [
+                (240, "Strike 1"),
+                (480, "Strike 2"),
+                (720, "Strike 3"),
+            ]
+            for threshold, role_name in thresholds:
+                role = discord.utils.get(guild.roles, name=role_name)
+                if user_data["minutes"] >= threshold and role and role not in member.roles:
+                    try:
+                        dm_content = strike_messages[role_name]["dm"]
+                        await member.add_roles(role, reason="Auto Strike")
+                        await member.send(dm_content)
+                        public_log_channel = interaction.client.get_channel(PUBLIC_LOG_CHANNEL_ID)
+                        if public_log_channel:
+                            await public_log_channel.send(strike_messages[role_name]["public"].format(mention=member.mention))
+                    except Exception as e:
+                        print(f"Strike role/DM failed: {e}")
+
+        leaderboard_channel = interaction.client.get_channel(LEADERBOARD_CHANNEL_ID)
+        await leaderboard_channel.send(f"🏆 Updated Leaderboard:\n{build_leaderboard()}")
+        await interaction.response.send_message("✅ Comms and explanation recorded.", ephemeral=True)
+
 class Group1Select(discord.ui.Select):
     def __init__(self):
         options = [discord.SelectOption(label=rule, description=f"{minutes} mins" if minutes != "PERM BAN" else "Permanent Ban") for rule, minutes in GROUP1]
         super().__init__(placeholder="Group 1 Rules", min_values=0, max_values=1, options=options)
     async def callback(self, interaction: discord.Interaction):
-        await handle_selection(self, interaction)
+        rule = self.values[0]
+        minutes = RULE_BREAKS.get(rule)
+        if minutes == "PERM BAN":
+            await interaction.response.send_message(f"🚫 **{rule}** is a permanent ban offence. No comms assigned.", ephemeral=True)
+            return
+        await interaction.response.send_modal(ExplanationModal(rule, minutes))
 
 class Group2Select(discord.ui.Select):
     def __init__(self):
         options = [discord.SelectOption(label=rule, description=f"{minutes} mins" if minutes != "PERM BAN" else "Permanent Ban") for rule, minutes in GROUP2]
         super().__init__(placeholder="Group 2 Rules", min_values=0, max_values=1, options=options)
     async def callback(self, interaction: discord.Interaction):
-        await handle_selection(self, interaction)
-
-async def handle_selection(select, interaction):
-    selected = select.values
-    if not selected:
-        await interaction.response.send_message("❗ Please select a rule break.", ephemeral=True)
-        return
-    rule = selected[0]
-    minutes = RULE_BREAKS.get(rule)
-    if minutes == "PERM BAN":
-        await interaction.response.send_message(f"🚫 **{rule}** is a permanent ban offence. No comms assigned.", ephemeral=True)
-        return
-    user_id = interaction.user.id
-    user_data = user_comms_data[user_id]
-    user_data["minutes"] += minutes
-    user_data["offences"] += 1
-    user_data["rule_breaks"].append(rule)
-
-    log_channel = bot.get_channel(LOG_CHANNEL_ID)
-    await log_channel.send(f"🛑 **{interaction.user.mention}** received **{minutes} minutes** in comms for **{rule}**.")
-
-    guild = interaction.guild
-    member = guild.get_member(user_id)
-    if member:
-        thresholds = [
-            (240, "Strike 1"),
-            (480, "Strike 2"),
-            (720, "Strike 3"),
-        ]
-        for threshold, role_name in thresholds:
-            role = discord.utils.get(guild.roles, name=role_name)
-            if user_data["minutes"] >= threshold and role and role not in member.roles:
-                try:
-                    dm_content = strike_messages[role_name]["dm"]
-                    await member.add_roles(role, reason="Auto Strike")
-                    await member.send(dm_content)
-                    public_log_channel = bot.get_channel(PUBLIC_LOG_CHANNEL_ID)
-                    if public_log_channel:
-                        await public_log_channel.send(strike_messages[role_name]["public"].format(mention=member.mention))
-                except Exception as e:
-                    print(f"Strike role/DM failed: {e}")
-
-    leaderboard_channel = bot.get_channel(LEADERBOARD_CHANNEL_ID)
-    await leaderboard_channel.send(f"🏆 Updated Leaderboard:\n{build_leaderboard()}")
-    await interaction.response.send_message("✅ Comms recorded.", ephemeral=True)
+        rule = self.values[0]
+        minutes = RULE_BREAKS.get(rule)
+        if minutes == "PERM BAN":
+            await interaction.response.send_message(f"🚫 **{rule}** is a permanent ban offence. No comms assigned.", ephemeral=True)
+            return
+        await interaction.response.send_modal(ExplanationModal(rule, minutes))
 
 class CommsPanel(discord.ui.View):
     def __init__(self):
